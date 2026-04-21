@@ -78,3 +78,6 @@ Consulte `docs/required-secrets-and-vars.md` para ver a configuração necessár
 
 Use `docs/adoption-guide.md` e os arquivos em `examples/` como ponto de partida
 para cada repositório de serviço.
+
+Para um exemplo completo e alinhado aos caminhos reais do Catalog, consulte
+`examples/catalog/`.

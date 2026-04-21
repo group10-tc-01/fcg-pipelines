@@ -1,0 +1,28 @@
+name: Catalog Infrastructure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - terraform/**
+      - .github/workflows/catalog-terraform-azure.yml
+  push:
+    branches: [main]
+    paths:
+      - terraform/**
+      - .github/workflows/catalog-terraform-azure.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  terraform:
+    uses: group10-tc-01/fcg-pipelines/.github/workflows/terraform-azure.yml@main
+    with:
+      working_directory: terraform
+      environment: production
+      apply: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+    secrets: inherit
