@@ -90,8 +90,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Gitleaks
         shell: bash
@@ -106,7 +104,7 @@ jobs:
 
       - name: Scan repository
         shell: bash
-        run: gitleaks detect --redact --verbose
+        run: gitleaks dir . --redact --verbose --no-banner
 
   dependency-scan:
     name: Dependency vulnerability scan
