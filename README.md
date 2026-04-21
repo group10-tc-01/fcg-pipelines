@@ -1,31 +1,32 @@
 # FCG Pipelines
 
-Reusable GitHub Actions workflows for the FIAP Cloud Games services.
+Workflows reutilizáveis do GitHub Actions para os serviços da FIAP Cloud Games.
 
-This repository centralizes CI/CD automation so each service repository only keeps a
-thin workflow file with service-specific variables. The goal is to make the
-delivery model easier to maintain, auditable, and aligned with the Phase 4
-requirements: cloud-native delivery, container images, security checks, AKS
-deployments, and optional GitOps promotion.
+Este repositório centraliza a automação de CI/CD para que cada serviço mantenha
+apenas um workflow simples com as variáveis específicas da aplicação. O objetivo
+é deixar o modelo de entrega mais fácil de manter, auditável e alinhado aos
+requisitos da Fase 4: entrega cloud-native, imagens de container, verificações
+de segurança, deploy em AKS e promoção opcional via GitOps.
 
 ## Workflows
 
-| Workflow                                        | Purpose                                                                                                          |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/branch-name-check.yml`       | Reusable branch naming policy.                                                                                   |
-| `.github/workflows/dotnet-service-ci.yml`       | Build, tests, coverage, dependency scan, secret scan, SonarCloud, and Docker build validation for .NET services. |
-| `.github/workflows/dotnet-service-delivery.yml` | Build, scan, push Docker image to Azure Container Registry, and deploy to AKS with rolling update.               |
-| `.github/workflows/gitops-image-update.yml`     | Update image tags in a GitOps repository so Argo CD or Flux can reconcile the cluster.                           |
-| `.github/workflows/terraform-azure.yml`         | Plan and optionally apply Azure infrastructure with Terraform using OIDC.                                        |
+| Workflow                                        | Finalidade                                                                                                                 |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/branch-name-check.yml`       | Política reutilizável para validação do nome das branches.                                                                 |
+| `.github/workflows/dotnet-service-ci.yml`       | Build, testes, cobertura, análise de dependências, secret scan, SonarCloud e validação de build Docker para serviços .NET. |
+| `.github/workflows/dotnet-service-delivery.yml` | Build, scan, push da imagem Docker para o Azure Container Registry e deploy no AKS com rolling update.                     |
+| `.github/workflows/gitops-image-update.yml`     | Atualização de tags de imagem em um repositório GitOps para que Argo CD ou Flux faça a reconciliação do cluster.           |
+| `.github/workflows/terraform-azure.yml`         | Execução de plan e, opcionalmente, apply da infraestrutura Azure com Terraform usando OIDC.                                |
 
-## Recommended service layout
+## Estrutura recomendada nos serviços
 
-Each service repository should keep only small workflow wrappers, for example:
+Cada repositório de serviço deve manter apenas wrappers pequenos de workflow,
+por exemplo:
 
-Because this repository is private, GitHub Actions access must allow the service
-repositories in `group10-tc-01` to consume reusable workflows from it. Configure
-this under repository or organization settings before replacing the existing
-service workflows.
+Como este repositório é privado, o acesso do GitHub Actions precisa permitir que
+os repositórios de serviço da organização `group10-tc-01` consumam os workflows
+reutilizáveis daqui. Configure isso nas configurações do repositório ou da
+organização antes de substituir os workflows existentes dos serviços.
 
 ```yaml
 name: Catalog CI
@@ -50,29 +51,30 @@ jobs:
     secrets: inherit
 ```
 
-## Delivery strategy
+## Estratégia de entrega
 
-Two deployment models are supported:
+Dois modelos de deploy são suportados:
 
-1. Direct AKS rollout: build the image, push it to ACR, update the Kubernetes
-   deployment, and wait for rollout status.
-2. GitOps promotion: build and push the image in the service repository, then
-   update the image tag in `fcg-orchestration`. Argo CD or Flux applies the
-   change to the cluster.
+1. Rollout direto no AKS: faz build da imagem, envia para o ACR, atualiza o
+   deployment no Kubernetes e aguarda o status do rollout.
+2. Promoção via GitOps: faz build e push da imagem no repositório do serviço e,
+   em seguida, atualiza a tag da imagem no `fcg-orchestration`. Argo CD ou Flux
+   aplica a mudança no cluster.
 
-For the Phase 4 pitch, direct AKS rollout is the fastest way to demonstrate a
-live deploy. GitOps is the most professional long-term model because production
-state is declared in the orchestration repository.
+Para o pitch da Fase 4, o rollout direto no AKS é a forma mais rápida de
+demonstrar um live deploy. Para o longo prazo, GitOps é o modelo mais
+profissional, porque o estado de produção fica declarado no repositório de
+orquestração.
 
-## Security baseline
+## Base de segurança
 
-The workflows avoid hardcoded credentials and expect secrets to come from
-GitHub Environments, Azure federated credentials, Kubernetes Secrets, Azure Key
-Vault, or another managed secret store.
+Os workflows evitam credenciais hardcoded e esperam que os segredos venham de
+GitHub Environments, credenciais federadas do Azure, Kubernetes Secrets, Azure
+Key Vault ou outro cofre de segredos gerenciado.
 
-See `docs/required-secrets-and-vars.md` for the required configuration.
+Consulte `docs/required-secrets-and-vars.md` para ver a configuração necessária.
 
-## Adoption
+## Adoção
 
-Use `docs/adoption-guide.md` and the files under `examples/` as the starting
-point for each service repository.
+Use `docs/adoption-guide.md` e os arquivos em `examples/` como ponto de partida
+para cada repositório de serviço.

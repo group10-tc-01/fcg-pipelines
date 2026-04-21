@@ -1,38 +1,39 @@
-# Required Secrets And Variables
+# Secrets e Variáveis Obrigatórias
 
-Use GitHub Environments to scope deployment credentials. Avoid repository-wide
-secrets for production whenever possible.
+Use GitHub Environments para limitar o escopo das credenciais de deploy. Evite
+secrets globais no repositório para produção sempre que possível.
 
-## Organization or repository secrets
+## Secrets da organização ou do repositório
 
-| Name                    | Required by                                          | Purpose                                           |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------- |
-| `SONAR_TOKEN`           | `dotnet-service-ci.yml`                              | SonarCloud analysis token.                        |
-| `AZURE_CLIENT_ID`       | `dotnet-service-delivery.yml`, `terraform-azure.yml` | Azure AD application client ID for OIDC.          |
-| `AZURE_TENANT_ID`       | `dotnet-service-delivery.yml`, `terraform-azure.yml` | Azure tenant ID.                                  |
-| `AZURE_SUBSCRIPTION_ID` | `dotnet-service-delivery.yml`, `terraform-azure.yml` | Azure subscription ID.                            |
-| `GITOPS_TOKEN`          | `gitops-image-update.yml`                            | Token with write access to the GitOps repository. |
+| Nome                    | Usado por                                            | Finalidade                                            |
+| ----------------------- | ---------------------------------------------------- | ----------------------------------------------------- |
+| `SONAR_TOKEN`           | `dotnet-service-ci.yml`                              | Token de análise do SonarCloud.                       |
+| `AZURE_CLIENT_ID`       | `dotnet-service-delivery.yml`, `terraform-azure.yml` | Client ID da aplicação Azure AD para OIDC.            |
+| `AZURE_TENANT_ID`       | `dotnet-service-delivery.yml`, `terraform-azure.yml` | Tenant ID do Azure.                                   |
+| `AZURE_SUBSCRIPTION_ID` | `dotnet-service-delivery.yml`, `terraform-azure.yml` | Subscription ID do Azure.                             |
+| `GITOPS_TOKEN`          | `gitops-image-update.yml`                            | Token com permissão de escrita no repositório GitOps. |
 
-## Suggested GitHub variables
+## Variáveis sugeridas no GitHub
 
-| Name                            | Example         | Purpose                        |
-| ------------------------------- | --------------- | ------------------------------ |
-| `AZURE_CONTAINER_REGISTRY_NAME` | `fcgregistry`   | ACR name without `azurecr.io`. |
-| `AKS_RESOURCE_GROUP`            | `rg-fcg-prod`   | AKS resource group.            |
-| `AKS_CLUSTER_NAME`              | `aks-fcg-prod`  | AKS cluster name.              |
-| `K8S_NAMESPACE`                 | `fcg`           | Kubernetes namespace.          |
-| `SONAR_ORGANIZATION`            | `group10-tc-01` | SonarCloud organization.       |
+| Nome                            | Exemplo         | Finalidade                    |
+| ------------------------------- | --------------- | ----------------------------- |
+| `AZURE_CONTAINER_REGISTRY_NAME` | `fcgregistry`   | Nome do ACR sem `azurecr.io`. |
+| `AKS_RESOURCE_GROUP`            | `rg-fcg-prod`   | Resource group do AKS.        |
+| `AKS_CLUSTER_NAME`              | `aks-fcg-prod`  | Nome do cluster AKS.          |
+| `K8S_NAMESPACE`                 | `fcg`           | Namespace do Kubernetes.      |
+| `SONAR_ORGANIZATION`            | `group10-tc-01` | Organização do SonarCloud.    |
 
-## Runtime application secrets
+## Segredos da aplicação em runtime
 
-Do not store these values in workflow files or appsettings files committed to
-source control:
+Não armazene estes valores em arquivos de workflow nem em arquivos `appsettings`
+commitados no controle de versão:
 
-- Database connection strings
-- MongoDB or DynamoDB credentials
-- Redis connection strings
-- OpenSearch or Elasticsearch credentials
-- Kafka SASL username and password
-- JWT signing keys
+- Strings de conexão de banco de dados
+- Credenciais de MongoDB ou DynamoDB
+- Strings de conexão Redis
+- Credenciais de OpenSearch ou Elasticsearch
+- Usuário e senha SASL do Kafka
+- Chaves de assinatura JWT
 
-Use Kubernetes Secrets or Azure Key Vault integration to inject them at runtime.
+Use Kubernetes Secrets ou integração com Azure Key Vault para injetar esses
+valores em runtime.

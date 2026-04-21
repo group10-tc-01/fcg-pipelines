@@ -1,23 +1,23 @@
-# Adoption Guide
+# Guia de Adoção
 
-This guide shows how to adopt the central pipeline repository in the service
-repositories.
+Este guia mostra como adotar o repositório central de pipelines nos repositórios
+dos serviços.
 
-## 1. Keep workflow wrappers in each service repository
+## 1. Mantenha wrappers de workflow em cada serviço
 
-Each service should keep only thin `.github/workflows/*.yml` files. The real
-implementation lives in this repository and is referenced with `uses:`.
+Cada serviço deve manter apenas arquivos simples em `.github/workflows/*.yml`. A
+implementação real fica neste repositório e é referenciada com `uses:`.
 
-Because `fcg-pipelines` is private, enable access for the service repositories
-before adoption:
+Como o `fcg-pipelines` é privado, habilite o acesso para os repositórios de
+serviço antes da adoção:
 
-- Repository settings in `fcg-pipelines`
+- Configurações do repositório `fcg-pipelines`
 - Actions
 - General
 - Access
 - Allow repositories in the organization to use these reusable workflows
 
-Use `examples/` as the baseline for:
+Use `examples/` como base para:
 
 - `fcg-catalog`
 - `fcg-users`
@@ -26,73 +26,76 @@ Use `examples/` as the baseline for:
 
 ## 2. Configure GitHub Environments
 
-Create at least one protected environment named `production` in each repository.
+Crie pelo menos um ambiente protegido chamado `production` em cada repositório.
 
-Recommended protections:
+Proteções recomendadas:
 
-- Required reviewers for manual approval when deploying to production.
-- Branch restriction to `main`.
-- Environment secrets for cloud access and product tokens.
+- Revisores obrigatórios para aprovação manual ao fazer deploy em produção.
+- Restrição de branch para `main`.
+- Secrets de ambiente para acesso à cloud e tokens de produto.
 
-## 3. Use Azure OIDC instead of client secrets
+## 3. Use Azure OIDC em vez de client secrets
 
-Create an Azure AD application with federated credentials for each repository
-or for the organization. Store only the IDs in GitHub secrets:
+Crie uma aplicação no Azure AD com credenciais federadas para cada repositório ou
+para a organização. Armazene apenas os IDs nos secrets do GitHub:
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_SUBSCRIPTION_ID`
 
-No Azure client secret is needed when OIDC is configured correctly.
+Nenhum client secret do Azure é necessário quando o OIDC está configurado
+corretamente.
 
-## 4. Use Kubernetes or managed secret stores at runtime
+## 4. Use Kubernetes ou cofres gerenciados em runtime
 
-Application secrets must not be committed in source code or workflow files.
+Segredos da aplicação não devem ser commitados no código-fonte nem nos arquivos
+de workflow.
 
-Recommended runtime sources:
+Fontes recomendadas em runtime:
 
 - Kubernetes Secrets
 - Azure Key Vault with workload identity
 - Managed identities
 
-Examples of sensitive values:
+Exemplos de valores sensíveis:
 
-- SQL connection strings
-- MongoDB or DynamoDB credentials
-- Redis connection strings
-- OpenSearch or Elasticsearch credentials
-- Kafka SASL credentials
+- Strings de conexão SQL
+- Credenciais de MongoDB ou DynamoDB
+- Strings de conexão Redis
+- Credenciais de OpenSearch ou Elasticsearch
+- Credenciais SASL do Kafka
+- Chaves de assinatura JWT
 
-## 5. Prefer GitOps for production
+## 5. Prefira GitOps para produção
 
-For the final architecture, keep Kubernetes manifests in `fcg-orchestration`
-and let Argo CD or Flux reconcile changes into AKS.
+Para a arquitetura final, mantenha os manifests Kubernetes no
+`fcg-orchestration` e deixe Argo CD ou Flux reconciliar as mudanças no AKS.
 
-The reusable workflow `gitops-image-update.yml` updates image references in a
-kustomization. Direct AKS deployment is still available for a simple live deploy
-demo.
+O workflow reutilizável `gitops-image-update.yml` atualiza referências de imagem
+em um kustomization. O deploy direto no AKS continua disponível para uma
+demonstração simples de live deploy.
 
-## 6. Suggested workflow split
+## 6. Divisão sugerida dos workflows
 
 Pull requests:
 
-- Branch naming policy
+- Política de nome de branch
 - Restore
 - Build
-- Unit tests
-- Integration tests
-- Functional tests when available
-- Coverage threshold
+- Testes unitários
+- Testes integrados
+- Testes funcionais quando disponíveis
+- Limite mínimo de cobertura
 - Secret scan
-- Dependency vulnerability scan
-- Docker build validation
+- Análise de vulnerabilidades em dependências
+- Validação de build Docker
 - SonarCloud analysis
 
-Main branch:
+Branch `main`:
 
-- Repeat CI gates
-- Build Docker image
-- Scan Docker image
-- Push image to ACR
-- Deploy to AKS or update GitOps manifests
-- Run healthcheck
+- Repetir os gates de CI
+- Fazer build da imagem Docker
+- Fazer scan da imagem Docker
+- Enviar imagem para o ACR
+- Fazer deploy no AKS ou atualizar manifests GitOps
+- Executar healthcheck
