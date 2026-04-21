@@ -1,0 +1,461 @@
+name: Reusable .NET Service CI
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: Short service name used in job labels and artifacts.
+        type: string
+        required: true
+      dotnet_version:
+        description: .NET SDK version.
+        type: string
+        default: 8.0.x
+      solution_path:
+        description: Path to the .sln or primary project.
+        type: string
+        required: true
+      build_configuration:
+        description: Build configuration.
+        type: string
+        default: Release
+      unit_tests_path:
+        description: Unit test project path. Leave empty to skip.
+        type: string
+        default: ""
+      integration_tests_path:
+        description: Integration test project path. Leave empty to skip.
+        type: string
+        default: ""
+      functional_tests_path:
+        description: Functional test project path. Leave empty to skip.
+        type: string
+        default: ""
+      test_environment:
+        description: ASP.NET Core environment used by integration and functional tests.
+        type: string
+        default: Test
+      coverage_threshold:
+        description: Minimum total line coverage percentage.
+        type: number
+        default: 80
+      run_sonar:
+        description: Run SonarCloud analysis.
+        type: boolean
+        default: true
+      sonar_project_key:
+        description: SonarCloud project key.
+        type: string
+        default: ""
+      sonar_organization:
+        description: SonarCloud organization.
+        type: string
+        default: ""
+      dockerfile_path:
+        description: Dockerfile path for build validation. Leave empty to skip.
+        type: string
+        default: ""
+      docker_context:
+        description: Docker build context.
+        type: string
+        default: .
+    secrets:
+      SONAR_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.service_name }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  branch-name:
+    name: Branch policy
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: group10-tc-01/fcg-pipelines/.github/workflows/branch-name-check.yml@main
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Gitleaks
+        shell: bash
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Scan repository
+        shell: bash
+        run: gitleaks detect --redact --verbose
+
+  dependency-scan:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Restore
+        run: dotnet restore "${{ inputs.solution_path }}"
+
+      - name: Check vulnerable packages
+        shell: bash
+        run: |
+          dotnet list "${{ inputs.solution_path }}" package --vulnerable --include-transitive > vulnerability-report.txt || true
+          cat vulnerability-report.txt
+          if grep -Ei '\b(high|critical)\b' vulnerability-report.txt; then
+            echo "High or critical vulnerable package found."
+            exit 1
+          fi
+
+      - name: Upload vulnerability report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.service_name }}-vulnerability-report
+          path: vulnerability-report.txt
+          if-no-files-found: ignore
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets', '**/packages.lock.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore "${{ inputs.solution_path }}"
+
+      - name: Build
+        run: dotnet build "${{ inputs.solution_path }}" --configuration "${{ inputs.build_configuration }}" --no-restore
+
+  unit-tests:
+    name: Unit tests
+    if: ${{ inputs.unit_tests_path != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets', '**/packages.lock.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore "${{ inputs.unit_tests_path }}"
+
+      - name: Run unit tests
+        run: >
+          dotnet test "${{ inputs.unit_tests_path }}"
+          --configuration "${{ inputs.build_configuration }}"
+          --no-restore
+          --logger "trx;LogFileName=unit-tests.trx"
+          --collect:"XPlat Code Coverage"
+          --results-directory TestResults/UnitTests
+          /p:CollectCoverage=true
+          /p:CoverletOutputFormat=\"opencover,cobertura\"
+          /p:CoverletOutput=TestResults/UnitTests/coverage
+
+      - name: Upload unit test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.service_name }}-unit-test-results
+          path: TestResults/UnitTests
+          if-no-files-found: ignore
+
+  integration-tests:
+    name: Integration tests
+    if: ${{ inputs.integration_tests_path != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      ASPNETCORE_ENVIRONMENT: ${{ inputs.test_environment }}
+      DOTNET_ENVIRONMENT: ${{ inputs.test_environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets', '**/packages.lock.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore "${{ inputs.integration_tests_path }}"
+
+      - name: Run integration tests
+        run: >
+          dotnet test "${{ inputs.integration_tests_path }}"
+          --configuration "${{ inputs.build_configuration }}"
+          --no-restore
+          --logger "trx;LogFileName=integration-tests.trx"
+          --collect:"XPlat Code Coverage"
+          --results-directory TestResults/IntegrationTests
+          /p:CollectCoverage=true
+          /p:CoverletOutputFormat=\"opencover,cobertura\"
+          /p:CoverletOutput=TestResults/IntegrationTests/coverage
+
+      - name: Upload integration test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.service_name }}-integration-test-results
+          path: TestResults/IntegrationTests
+          if-no-files-found: ignore
+
+  functional-tests:
+    name: Functional tests
+    if: ${{ inputs.functional_tests_path != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      ASPNETCORE_ENVIRONMENT: ${{ inputs.test_environment }}
+      DOTNET_ENVIRONMENT: ${{ inputs.test_environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets', '**/packages.lock.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore "${{ inputs.functional_tests_path }}"
+
+      - name: Run functional tests
+        run: >
+          dotnet test "${{ inputs.functional_tests_path }}"
+          --configuration "${{ inputs.build_configuration }}"
+          --no-restore
+          --logger "trx;LogFileName=functional-tests.trx"
+          --results-directory TestResults/FunctionalTests
+
+      - name: Upload functional test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.service_name }}-functional-test-results
+          path: TestResults/FunctionalTests
+          if-no-files-found: ignore
+
+  coverage-analysis:
+    name: Coverage analysis
+    if: ${{ always() && (inputs.unit_tests_path != '' || inputs.integration_tests_path != '') }}
+    needs:
+      - unit-tests
+      - integration-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.service_name }}-*-test-results
+          path: TestResults
+          merge-multiple: true
+
+      - name: Generate coverage report
+        shell: bash
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          "$HOME/.dotnet/tools/reportgenerator" \
+            -reports:"TestResults/**/coverage.cobertura.xml" \
+            -targetdir:"coverage" \
+            -reporttypes:"Cobertura;MarkdownSummary"
+
+      - name: Enforce coverage threshold
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          threshold = float("${{ inputs.coverage_threshold }}")
+          report = "coverage/Cobertura.xml"
+          if not os.path.exists(report):
+              print("Coverage report was not generated.")
+              sys.exit(1)
+
+          root = ET.parse(report).getroot()
+          rate = float(root.attrib.get("line-rate", "0")) * 100
+          print(f"Total line coverage: {rate:.2f}%")
+          if rate < threshold:
+              print(f"Coverage is below threshold: {threshold:.2f}%")
+              sys.exit(1)
+          PY
+
+      - name: Comment coverage summary
+        if: ${{ github.event_name == 'pull_request' && always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'coverage/Summary.md';
+            if (!fs.existsSync(path)) {
+              return;
+            }
+            const body = [
+              `## Coverage report for ${{ inputs.service_name }}`,
+              fs.readFileSync(path, 'utf8')
+            ].join('\n\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+      - name: Upload coverage report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.service_name }}-coverage-report
+          path: coverage
+          if-no-files-found: ignore
+
+  sonar-analysis:
+    name: SonarCloud analysis
+    if: ${{ inputs.run_sonar }}
+    needs:
+      - build
+      - unit-tests
+      - integration-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download test artifacts
+        if: ${{ inputs.unit_tests_path != '' || inputs.integration_tests_path != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.service_name }}-*-test-results
+          path: TestResults
+          merge-multiple: true
+
+      - name: Run SonarCloud scanner
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "SONAR_TOKEN is required when run_sonar is true."
+            exit 1
+          fi
+
+          if [[ -z "${{ inputs.sonar_project_key }}" ]]; then
+            echo "sonar_project_key is required when run_sonar is true."
+            exit 1
+          fi
+
+          dotnet tool install --global dotnet-sonarscanner
+
+          ARGS=("/k:${{ inputs.sonar_project_key }}")
+          if [[ -n "${{ inputs.sonar_organization }}" ]]; then
+            ARGS+=("/o:${{ inputs.sonar_organization }}")
+          fi
+
+          "$HOME/.dotnet/tools/dotnet-sonarscanner" begin \
+            "${ARGS[@]}" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.cs.opencover.reportsPaths="TestResults/**/*.opencover.xml"
+
+          dotnet restore "${{ inputs.solution_path }}"
+          dotnet build "${{ inputs.solution_path }}" --configuration "${{ inputs.build_configuration }}" --no-restore
+
+          "$HOME/.dotnet/tools/dotnet-sonarscanner" end /d:sonar.token="$SONAR_TOKEN"
+
+  docker-build-validation:
+    name: Docker build validation
+    if: ${{ inputs.dockerfile_path != '' }}
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image without push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.docker_context }}
+          file: ${{ inputs.dockerfile_path }}
+          push: false
+          tags: ${{ inputs.service_name }}:ci-${{ github.sha }}

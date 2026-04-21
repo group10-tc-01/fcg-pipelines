@@ -1,0 +1,84 @@
+name: Reusable GitOps Image Update
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: Service name used in commit messages.
+        type: string
+        required: true
+      gitops_repository:
+        description: Repository that stores Kubernetes manifests, for example group10-tc-01/fcg-orchestration.
+        type: string
+        required: true
+      gitops_ref:
+        description: Branch to update in the GitOps repository.
+        type: string
+        default: main
+      working_directory:
+        description: Directory containing kustomization.yaml.
+        type: string
+        required: true
+      image_name:
+        description: Image name as referenced by kustomize.
+        type: string
+        required: true
+      image_uri:
+        description: Full image URI with tag.
+        type: string
+        required: true
+      commit_user_name:
+        description: Git commit user name.
+        type: string
+        default: github-actions[bot]
+      commit_user_email:
+        description: Git commit user email.
+        type: string
+        default: 41898282+github-actions[bot]@users.noreply.github.com
+    secrets:
+      GITOPS_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitops-${{ inputs.gitops_repository }}-${{ inputs.service_name }}
+  cancel-in-progress: false
+
+jobs:
+  update-image:
+    name: Update GitOps image tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.gitops_repository }}
+          ref: ${{ inputs.gitops_ref }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Update image
+        working-directory: gitops/${{ inputs.working_directory }}
+        shell: bash
+        run: kustomize edit set image "${{ inputs.image_name }}=${{ inputs.image_uri }}"
+
+      - name: Commit and push
+        working-directory: gitops
+        shell: bash
+        run: |
+          git config user.name "${{ inputs.commit_user_name }}"
+          git config user.email "${{ inputs.commit_user_email }}"
+
+          if git diff --quiet; then
+            echo "No GitOps changes to publish."
+            exit 0
+          fi
+
+          git add "${{ inputs.working_directory }}"
+          git commit -m "chore(gitops): update ${{ inputs.service_name }} image"
+          git push origin HEAD:${{ inputs.gitops_ref }}

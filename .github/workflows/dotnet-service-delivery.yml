@@ -1,0 +1,198 @@
+name: Reusable .NET Service Delivery To AKS
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: Short service name.
+        type: string
+        required: true
+      image_name:
+        description: Container image name without registry host.
+        type: string
+        required: true
+      dockerfile_path:
+        description: Dockerfile path.
+        type: string
+        required: true
+      docker_context:
+        description: Docker build context.
+        type: string
+        default: .
+      azure_container_registry_name:
+        description: Azure Container Registry name without azurecr.io.
+        type: string
+        required: true
+      aks_resource_group:
+        description: AKS resource group.
+        type: string
+        required: true
+      aks_cluster_name:
+        description: AKS cluster name.
+        type: string
+        required: true
+      k8s_namespace:
+        description: Kubernetes namespace.
+        type: string
+        default: default
+      k8s_deployment_name:
+        description: Kubernetes deployment name.
+        type: string
+        required: true
+      k8s_container_name:
+        description: Container name inside the Kubernetes deployment.
+        type: string
+        required: true
+      k8s_manifests_path:
+        description: Optional manifests path to apply before rollout.
+        type: string
+        default: ""
+      environment:
+        description: GitHub Environment name.
+        type: string
+        default: production
+      healthcheck_url:
+        description: Optional external healthcheck URL after rollout.
+        type: string
+        default: ""
+      trivy_severity:
+        description: Vulnerability severity levels that fail the image scan.
+        type: string
+        default: CRITICAL,HIGH
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ inputs.environment }}-${{ inputs.service_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-scan-push:
+    name: Build, scan, and push image
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      image_uri: ${{ steps.meta.outputs.image_uri }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        shell: bash
+        run: az acr login --name "${{ inputs.azure_container_registry_name }}"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image metadata
+        id: meta
+        shell: bash
+        run: |
+          REGISTRY="${{ inputs.azure_container_registry_name }}.azurecr.io"
+          IMAGE="${REGISTRY}/${{ inputs.image_name }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAG="sha-${SHORT_SHA}"
+
+          {
+            echo "image_uri=${IMAGE}:${TAG}"
+            echo "image_tag=${TAG}"
+            echo "tags<<EOF"
+            echo "${IMAGE}:${TAG}"
+            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+              echo "${IMAGE}:main"
+            fi
+            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+              echo "${IMAGE}:${GITHUB_REF_NAME}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.docker_context }}
+          file: ${{ inputs.dockerfile_path }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image_uri }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: ${{ inputs.trivy_severity }}
+
+  deploy-aks:
+    name: Deploy to AKS
+    needs: build-scan-push
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        if: ${{ inputs.k8s_manifests_path != '' }}
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Get AKS credentials
+        shell: bash
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ inputs.aks_resource_group }}" \
+            --name "${{ inputs.aks_cluster_name }}" \
+            --overwrite-existing
+
+      - name: Apply manifests
+        if: ${{ inputs.k8s_manifests_path != '' }}
+        shell: bash
+        run: kubectl apply -f "${{ inputs.k8s_manifests_path }}" -n "${{ inputs.k8s_namespace }}"
+
+      - name: Update deployment image
+        shell: bash
+        run: |
+          kubectl set image \
+            deployment/${{ inputs.k8s_deployment_name }} \
+            ${{ inputs.k8s_container_name }}="${{ needs.build-scan-push.outputs.image_uri }}" \
+            -n "${{ inputs.k8s_namespace }}"
+
+      - name: Wait for rolling update
+        shell: bash
+        run: |
+          kubectl rollout status \
+            deployment/${{ inputs.k8s_deployment_name }} \
+            -n "${{ inputs.k8s_namespace }}" \
+            --timeout=300s
+
+      - name: Healthcheck
+        if: ${{ inputs.healthcheck_url != '' }}
+        shell: bash
+        run: |
+          curl --fail --retry 10 --retry-delay 10 --retry-all-errors "${{ inputs.healthcheck_url }}"

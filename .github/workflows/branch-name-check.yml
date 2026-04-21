@@ -1,0 +1,61 @@
+name: Reusable Branch Name Check
+
+on:
+  workflow_call:
+    inputs:
+      allowed_pattern:
+        description: Regex accepted for branch names.
+        type: string
+        default: ^(feature|fix|bugfix|hotfix|release|chore|docs|refactor|test)\/[a-z0-9._-]+$
+      allow_main:
+        description: Allow main branch in push workflows.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  branch-name:
+    name: Validate branch name
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve branch
+        id: branch
+        shell: bash
+        run: |
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          echo "name=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate
+        id: validate
+        shell: bash
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          if [[ "${{ inputs.allow_main }}" == "true" && "$BRANCH" == "main" ]]; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$BRANCH" =~ ${{ inputs.allowed_pattern }} ]]; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "Invalid branch name: $BRANCH"
+            exit 1
+          fi
+
+      - name: Comment on pull request
+        if: ${{ failure() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = '${{ steps.branch.outputs.name }}';
+            const pattern = `${{ inputs.allowed_pattern }}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Branch \`${branch}\` does not match the required pattern: \`${pattern}\`.`
+            });

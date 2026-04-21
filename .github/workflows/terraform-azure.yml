@@ -1,0 +1,153 @@
+name: Reusable Terraform Azure
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Terraform working directory.
+        type: string
+        default: terraform
+      terraform_version:
+        description: Terraform CLI version.
+        type: string
+        default: 1.9.8
+      environment:
+        description: GitHub Environment name.
+        type: string
+        default: production
+      apply:
+        description: Apply the plan. Should only be true on protected branches.
+        type: boolean
+        default: false
+      plan_artifact_name:
+        description: Name used for the Terraform plan artifact.
+        type: string
+        default: terraform-plan
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: terraform-${{ inputs.environment }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: true
+
+jobs:
+  plan:
+    name: Terraform plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform fmt
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Export plan text
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform show -no-color tfplan > tfplan.txt
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.plan_artifact_name }}
+          path: |
+            ${{ inputs.working_directory }}/tfplan
+            ${{ inputs.working_directory }}/tfplan.txt
+          if-no-files-found: error
+
+      - name: Comment plan on pull request
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('${{ inputs.working_directory }}/tfplan.txt', 'utf8');
+            const body = [
+              '## Terraform plan',
+              '```terraform',
+              plan.length > 60000 ? plan.slice(0, 60000) + '\n...plan truncated...' : plan,
+              '```'
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+  apply:
+    name: Terraform apply
+    if: ${{ inputs.apply && github.ref_name == 'main' }}
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform init
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform init -input=false
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.plan_artifact_name }}
+          path: ${{ inputs.working_directory }}
+
+      - name: Terraform apply
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform apply -input=false -auto-approve tfplan

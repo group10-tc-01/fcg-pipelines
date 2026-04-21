@@ -1,0 +1,22 @@
+name: Catalog CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: group10-tc-01/fcg-pipelines/.github/workflows/dotnet-service-ci.yml@main
+    with:
+      service_name: catalog
+      solution_path: FCG.Catalog.sln
+      unit_tests_path: tests/FCG.Catalog.UnitTests/FCG.Catalog.UnitTests.csproj
+      integration_tests_path: tests/FCG.Catalog.IntegratedTests/FCG.Catalog.IntegratedTests.csproj
+      dockerfile_path: src/FCG.Catalog.WebApi/Dockerfile
+      docker_context: .
+      sonar_project_key: group10-tc-01_fcg-catalog
+      sonar_organization: group10-tc-01
+      coverage_threshold: 80
+    secrets: inherit

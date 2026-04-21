@@ -1,0 +1,14 @@
+.vs/
+.vscode/
+bin/
+obj/
+.terraform/
+.terraform.lock.hcl
+*.tfplan
+*.tfstate
+*.tfstate.*
+TestResults/
+coverage/
+*.trx
+*.log
+*.tmp
