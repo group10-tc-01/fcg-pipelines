@@ -22,6 +22,11 @@ deployments, and optional GitOps promotion.
 
 Each service repository should keep only small workflow wrappers, for example:
 
+Because this repository is private, GitHub Actions access must allow the service
+repositories in `group10-tc-01` to consume reusable workflows from it. Configure
+this under repository or organization settings before replacing the existing
+service workflows.
+
 ```yaml
 name: Catalog CI
 

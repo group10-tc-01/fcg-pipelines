@@ -8,6 +8,15 @@ repositories.
 Each service should keep only thin `.github/workflows/*.yml` files. The real
 implementation lives in this repository and is referenced with `uses:`.
 
+Because `fcg-pipelines` is private, enable access for the service repositories
+before adoption:
+
+- Repository settings in `fcg-pipelines`
+- Actions
+- General
+- Access
+- Allow repositories in the organization to use these reusable workflows
+
 Use `examples/` as the baseline for:
 
 - `fcg-catalog`
