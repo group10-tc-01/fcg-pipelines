@@ -68,6 +68,8 @@ on:
         required: true
       AZURE_CONTAINER_REGISTRY_PASSWORD:
         required: true
+      AKS_KUBECONFIG:
+        required: false
       AZURE_CLIENT_ID:
         required: false
       AZURE_TENANT_ID:
@@ -152,46 +154,52 @@ jobs:
     if: ${{ inputs.deploy_to_aks }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    env:
+      KUBECONFIG: /tmp/aks-kubeconfig
     steps:
       - name: Checkout
         if: ${{ inputs.k8s_manifests_path != '' }}
         uses: actions/checkout@v4
 
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
-      - name: Get AKS credentials
+      - name: Configure AKS kubeconfig
         shell: bash
+        env:
+          AKS_KUBECONFIG: ${{ secrets.AKS_KUBECONFIG }}
         run: |
-          az aks get-credentials \
-            --resource-group "${{ inputs.aks_resource_group }}" \
-            --name "${{ inputs.aks_cluster_name }}" \
-            --overwrite-existing
+          if [[ -z "${AKS_KUBECONFIG}" ]]; then
+            echo "AKS_KUBECONFIG secret is required when deploy_to_aks is true." >&2
+            exit 1
+          fi
+
+          printf '%s' "${AKS_KUBECONFIG}" > "${KUBECONFIG}"
+          chmod 600 "${KUBECONFIG}"
+
+      - name: Verify AKS access
+        shell: bash
+        run: kubectl --kubeconfig "${KUBECONFIG}" get namespace "${{ inputs.k8s_namespace }}"
 
       - name: Apply manifests
         if: ${{ inputs.k8s_manifests_path != '' }}
         shell: bash
-        run: kubectl apply -f "${{ inputs.k8s_manifests_path }}" -n "${{ inputs.k8s_namespace }}"
+        run: kubectl --kubeconfig "${KUBECONFIG}" apply -f "${{ inputs.k8s_manifests_path }}" -n "${{ inputs.k8s_namespace }}"
 
       - name: Update deployment image
         shell: bash
         run: |
-          kubectl set image \
+          IMAGE="${{ inputs.azure_container_registry_name }}.azurecr.io/${{ inputs.image_name }}:${{ needs.build-scan-push.outputs.image_tag }}"
+
+          kubectl --kubeconfig "${KUBECONFIG}" set image \
             deployment/${{ inputs.k8s_deployment_name }} \
-            ${{ inputs.k8s_container_name }}="${{ needs.build-scan-push.outputs.image_uri }}" \
+            ${{ inputs.k8s_container_name }}="${IMAGE}" \
             -n "${{ inputs.k8s_namespace }}"
 
       - name: Wait for rolling update
         shell: bash
         run: |
-          kubectl rollout status \
+          kubectl --kubeconfig "${KUBECONFIG}" rollout status \
             deployment/${{ inputs.k8s_deployment_name }} \
             -n "${{ inputs.k8s_namespace }}" \
             --timeout=300s
