@@ -55,17 +55,25 @@ on:
         description: Optional external healthcheck URL after rollout.
         type: string
         default: ""
+      deploy_to_aks:
+        description: Whether to deploy the pushed image to AKS.
+        type: boolean
+        default: false
       trivy_severity:
         description: Vulnerability severity levels that fail the image scan.
         type: string
         default: CRITICAL,HIGH
     secrets:
+      AZURE_CONTAINER_REGISTRY_USERNAME:
+        required: true
+      AZURE_CONTAINER_REGISTRY_PASSWORD:
+        required: true
       AZURE_CLIENT_ID:
-        required: true
+        required: false
       AZURE_TENANT_ID:
-        required: true
+        required: false
       AZURE_SUBSCRIPTION_ID:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -87,16 +95,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: Login to ACR
-        shell: bash
-        run: az acr login --name "${{ inputs.azure_container_registry_name }}"
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.azure_container_registry_name }}.azurecr.io
+          username: ${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.AZURE_CONTAINER_REGISTRY_PASSWORD }}
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -133,7 +137,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
 
       - name: Scan image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.image_uri }}
           format: table
@@ -145,6 +149,7 @@ jobs:
   deploy-aks:
     name: Deploy to AKS
     needs: build-scan-push
+    if: ${{ inputs.deploy_to_aks }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
