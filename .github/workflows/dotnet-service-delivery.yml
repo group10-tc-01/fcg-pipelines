@@ -70,9 +70,13 @@ on:
         required: true
       AKS_KUBECONFIG:
         required: false
-      AZURE_CLIENT_ID:
+      AKS_KEYVAULT_CLIENT_ID:
+        required: false
+      KEY_VAULT_NAME:
         required: false
       AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
         required: false
       AZURE_SUBSCRIPTION_ID:
         required: false
@@ -180,6 +184,27 @@ jobs:
       - name: Verify AKS access
         shell: bash
         run: kubectl --kubeconfig "${KUBECONFIG}" get namespace "${{ inputs.k8s_namespace }}"
+
+      - name: Render Kubernetes manifests
+        if: ${{ inputs.k8s_manifests_path != '' }}
+        shell: bash
+        env:
+          AKS_KEYVAULT_CLIENT_ID: ${{ secrets.AKS_KEYVAULT_CLIENT_ID }}
+          KEY_VAULT_NAME: ${{ secrets.KEY_VAULT_NAME }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          if grep -R "__AKS_KEYVAULT_CLIENT_ID__\|__KEY_VAULT_NAME__\|__AZURE_TENANT_ID__" "${{ inputs.k8s_manifests_path }}" >/dev/null; then
+            if [[ -z "${AKS_KEYVAULT_CLIENT_ID}" || -z "${KEY_VAULT_NAME}" || -z "${AZURE_TENANT_ID}" ]]; then
+              echo "AKS_KEYVAULT_CLIENT_ID, KEY_VAULT_NAME, and AZURE_TENANT_ID secrets are required to render Kubernetes manifests." >&2
+              exit 1
+            fi
+
+            find "${{ inputs.k8s_manifests_path }}" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 |
+              xargs -0 sed -i \
+                -e "s|__AKS_KEYVAULT_CLIENT_ID__|${AKS_KEYVAULT_CLIENT_ID}|g" \
+                -e "s|__KEY_VAULT_NAME__|${KEY_VAULT_NAME}|g" \
+                -e "s|__AZURE_TENANT_ID__|${AZURE_TENANT_ID}|g"
+          fi
 
       - name: Apply manifests
         if: ${{ inputs.k8s_manifests_path != '' }}
